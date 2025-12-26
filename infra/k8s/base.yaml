@@ -1,0 +1,266 @@
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingestion-config
+data:
+  CONTROL_SERVER_URL: "http://control-server.hs-control.svc.cluster.local:9000"
+  DATABASE_URL: "postgres://postgres:postgres@postgres:5432/ingestion?sslmode=disable"
+  # Individual database connection attributes
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: "postgres"
+  POSTGRES_DB: "ingestion"
+  PORT: "8080"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-script
+data:
+  init.sql: |
+    -- Initialize the events table and indexes
+    -- This script runs automatically when PostgreSQL starts
+
+    CREATE TABLE IF NOT EXISTS events (
+        id SERIAL PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        event_timestamp BIGINT NOT NULL,
+        received_at BIGINT NOT NULL,
+        customer_id TEXT NOT NULL,
+        restaurant_id TEXT NOT NULL,
+        driver_id TEXT NOT NULL,
+        location_lat DOUBLE PRECISION NOT NULL,
+        location_lng DOUBLE PRECISION NOT NULL,
+        platform_token TEXT NOT NULL,
+        validation_status TEXT NOT NULL,
+        validation_error TEXT
+    );
+
+    -- Create indexes for better query performance
+    CREATE INDEX IF NOT EXISTS idx_order_id ON events(order_id);
+    CREATE INDEX IF NOT EXISTS idx_event_timestamp ON events(event_timestamp);
+    CREATE INDEX IF NOT EXISTS idx_received_at ON events(received_at);
+    CREATE INDEX IF NOT EXISTS idx_validation_status ON events(validation_status);
+    CREATE INDEX IF NOT EXISTS idx_customer_id ON events(customer_id);
+    CREATE INDEX IF NOT EXISTS idx_restaurant_id ON events(restaurant_id);
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion-service
+  labels:
+    app: ingestion-service
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ingestion-service
+  template:
+    metadata:
+      labels:
+        app: ingestion-service
+        version: v1
+    spec:
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:15-alpine
+        envFrom:
+        - configMapRef:
+            name: ingestion-config
+        command:
+        - sh
+        - -c
+        - |
+          echo "Waiting for postgres at $POSTGRES_HOST:$POSTGRES_PORT..."
+          until pg_isready -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER; do
+            echo "Postgres not ready yet, retrying..."
+            sleep 2
+          done
+          echo "Postgres is ready!"
+      containers:
+      - name: ingestion-service
+        image: europe-west1-docker.pkg.dev/hungerstation-hackathon-6957/build-day-25-repo/ingestion-service:base
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        envFrom:
+        - configMapRef:
+            name: ingestion-config
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingestion-service
+  labels:
+    app: ingestion-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: ingestion-service
+
+---
+# ServiceMonitor for Prometheus metrics scraping
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ingestion-service-monitor
+  labels:
+    # This label must match the 'serviceMonitorSelector' in Prometheus
+    release: monitoring
+    app: ingestion-service
+    app.kubernetes.io/instance: monitoring
+    app.kubernetes.io/part-of: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: ingestion-service
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scheme: http
+
+---
+# PostgreSQL for testing/development
+# For production, use managed PostgreSQL (Cloud SQL) or provided by SRE
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: POSTGRES_DB
+          value: "ingestion"
+        - name: POSTGRES_USER
+          value: "postgres"
+        - name: POSTGRES_PASSWORD
+          value: "postgres"
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        - name: postgres-init
+          mountPath: /docker-entrypoint-initdb.d
+          readOnly: true
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+      - name: postgres-init
+        configMap:
+          name: postgres-init-script
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    app: postgres
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: postgres
+
+---
+# PodMonitor for Istio sidecar metrics scraping
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: istio-proxies
+  labels:
+    release: monitoring
+    app.kubernetes.io/instance: monitoring
+    app.kubernetes.io/part-of: kube-prometheus-stack
+spec:
+  selector:
+    matchExpressions:
+    - key: istio-prometheus-ignore
+      operator: DoesNotExist
+  podMetricsEndpoints:
+  - port: http-envoy-prom
+    path: /stats/prometheus
+    interval: 30s
+    scheme: http

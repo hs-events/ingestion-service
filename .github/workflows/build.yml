@@ -1,0 +1,44 @@
+name: Docker Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: [self-hosted]
+
+    container:
+      image: gcr.io/cloud-builders/docker
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gcloud CLI
+        run: |
+          apt-get update
+          apt-get install -y curl apt-transport-https ca-certificates gnupg lsb-release
+          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+            > /etc/apt/sources.list.d/google-cloud-sdk.list
+          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+            | gpg --dearmor > /usr/share/keyrings/cloud.google.gpg
+          apt-get update
+          apt-get install -y google-cloud-cli
+          
+      - name: Set image name
+        id: vars
+        run: |
+          REPO_NAME=$(basename "$GITHUB_REPOSITORY")
+          IMAGE="europe-west1-docker.pkg.dev/hungerstation-hackathon-6957/build-day-25-repo/${REPO_NAME}:${GITHUB_SHA}"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          
+      - name: Build image
+        run: docker build -t "${{ steps.vars.outputs.image }}" .
+        
+      - name: Push image
+        run: |
+          gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+          docker push "${{ steps.vars.outputs.image }}"
