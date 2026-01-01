@@ -32,7 +32,7 @@ jobs:
         id: vars
         run: |
           REPO_NAME=$(basename "$GITHUB_REPOSITORY")
-          IMAGE="europe-west1-docker.pkg.dev/hungerstation-hackathon-6957/build-day-25-repo/${REPO_NAME}:${GITHUB_SHA}"
+          IMAGE="europe-west1-docker.pkg.dev/hungerstation-hackathon-6957/build-day-25-repo/ingestion-service:${GITHUB_SHA}"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
 
       - name: Build image
