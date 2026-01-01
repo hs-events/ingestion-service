@@ -43,6 +43,7 @@ jobs:
 
       - name: Commit updated manifest back to repo
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config --global user.name "github-actions"
           git config --global user.email "github-actions@github.com"
           git add infra/k8s/base.yaml
