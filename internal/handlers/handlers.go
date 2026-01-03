@@ -25,6 +25,7 @@ func DeliveryEventsHandler(w http.ResponseWriter, r *http.Request) {
 
 // handlePostDeliveryEvent processes incoming delivery events
 func handlePostDeliveryEvent(w http.ResponseWriter, r *http.Request) {
+	logger.Info("POST /delivery-events requested", nil)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		logger.Error("failed to read request body", map[string]interface{}{"error": err.Error()})
