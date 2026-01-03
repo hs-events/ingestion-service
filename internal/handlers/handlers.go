@@ -27,13 +27,15 @@ func DeliveryEventsHandler(w http.ResponseWriter, r *http.Request) {
 func handlePostDeliveryEvent(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		logger.Error("failed to read request body", map[string]interface{}{"error": err.Error()})
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
 	var event models.DeliveryEvent
 	if err := json.Unmarshal(body, &event); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		logger.Error("failed to unmarshal delivery event", map[string]interface{}{"error": err.Error()})
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
@@ -41,14 +43,16 @@ func handlePostDeliveryEvent(w http.ResponseWriter, r *http.Request) {
 
 	validTokens, err := validation.FetchPlatformTokens()
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		logger.Error("failed to fetch platform tokens", map[string]interface{}{"error": err.Error()})
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
 	if validation.ValidatePlatformToken(platformToken, validTokens) {
 		err = storage.StoreEvent(event, platformToken, "valid")
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			logger.Error("failed to store valid event", map[string]interface{}{"error": err.Error()})
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -73,7 +77,7 @@ func handleGetDeliveryEvents(w http.ResponseWriter, r *http.Request) {
 	events, err := storage.QueryEvents(limit, filtersStr)
 	if err != nil {
 		logger.Error("failed to query events", map[string]interface{}{"error": err.Error()})
-		http.Error(w, "database error", http.StatusInternalServerError)
+		http.Error(w, "database error", http.StatusBadRequest)
 		return
 	}
 
