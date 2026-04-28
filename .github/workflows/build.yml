@@ -15,18 +15,13 @@ jobs:
   build:
     runs-on: actions-runner-controller
 
-    container:
-      image: google/cloud-sdk:slim
-      volumes:
-        - /var/run/docker.sock:/var/run/docker.sock
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Docker CLI
+      - name: Install Docker & Google CLI
         run: |
           apt-get update
-          apt-get install -y docker.io
+          apt-get install -y docker.io google-cloud-cli
 
       - name: Set image name
         id: vars
