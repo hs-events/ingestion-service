@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -36,6 +37,13 @@ func handlePostDeliveryEvent(w http.ResponseWriter, r *http.Request) {
 	var event models.DeliveryEvent
 	if err := json.Unmarshal(body, &event); err != nil {
 		logger.Error("failed to unmarshal event", map[string]interface{}{"error": err.Error()})
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if err := validateEvent(event); err != nil {
+		logger.Error("event validation failed", map[string]interface{}{"error": err.Error()})
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
@@ -102,4 +110,34 @@ func handleGetDeliveryEvents(w http.ResponseWriter, r *http.Request) {
 func HealthHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+}
+
+// validateEvent checks if the delivery event has all required fields and valid data
+func validateEvent(event models.DeliveryEvent) error {
+	if event.OrderID == "" {
+		return fmt.Errorf("order_id is required")
+	}
+	if event.EventType == "" {
+		return fmt.Errorf("event_type is required")
+	}
+	if event.EventTimestamp.IsZero() {
+		return fmt.Errorf("event_timestamp is required and must be valid")
+	}
+	if event.CustomerID == "" {
+		return fmt.Errorf("customer_id is required")
+	}
+	if event.RestaurantID == "" {
+		return fmt.Errorf("restaurant_id is required")
+	}
+	if event.DriverID == "" {
+		return fmt.Errorf("driver_id is required")
+	}
+	// Validate location coordinates
+	if event.Location.Lat < -90 || event.Location.Lat > 90 {
+		return fmt.Errorf("location lat must be between -90 and 90")
+	}
+	if event.Location.Lng < -180 || event.Location.Lng > 180 {
+		return fmt.Errorf("location lng must be between -180 and 180")
+	}
+	return nil
 }
