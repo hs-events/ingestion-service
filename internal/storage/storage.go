@@ -22,8 +22,8 @@ func StoreEvent(event models.DeliveryEvent, platformToken, validationStatus stri
 		INSERT INTO events (order_id, event_type, event_timestamp, received_at,
 		                    customer_id, restaurant_id, driver_id, location_lat, location_lng,
 		                    platform_token, validation_status, validation_error)
-		VALUES ('`+event.OrderID+`', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, '')
-	`, event.EventType, eventTimestamp, receivedAt,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '')
+	`, event.OrderID, event.EventType, eventTimestamp, receivedAt,
 		event.CustomerID, event.RestaurantID, event.DriverID, event.Location.Lat, event.Location.Lng,
 		platformToken, validationStatus)
 
@@ -34,17 +34,56 @@ func StoreEvent(event models.DeliveryEvent, platformToken, validationStatus stri
 	return nil
 }
 
+// StoreEvents persists multiple events to the database in a single transaction
+func StoreEvents(events []models.DeliveryEvent, platformToken, validationStatus string) error {
+	if len(events) == 0 {
+		return nil
+	}
+
+	tx, err := DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	receivedAt := time.Now().Unix()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO events (order_id, event_type, event_timestamp, received_at,
+		                    customer_id, restaurant_id, driver_id, location_lat, location_lng,
+		                    platform_token, validation_status, validation_error)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '')
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, event := range events {
+		eventTimestamp := event.EventTimestamp.Unix()
+		_, err = stmt.Exec(event.OrderID, event.EventType, eventTimestamp, receivedAt,
+			event.CustomerID, event.RestaurantID, event.DriverID, event.Location.Lat, event.Location.Lng,
+			platformToken, validationStatus)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
 // QueryEvents retrieves events from the database
 func QueryEvents(limit int, filtersStr string) ([]models.StoredEvent, error) {
-	rows, err := DB.Query(`
+	query := `
 		SELECT id, order_id, event_type, event_timestamp, received_at,
 		       customer_id, restaurant_id, driver_id, location_lat, location_lng,
 		       platform_token, validation_status, validation_error
 		FROM events
-		`+filtersStr+`
+		WHERE 1=1 ` + filtersStr + `
 		ORDER BY received_at DESC
 		LIMIT $1
-	`, limit)
+	`
+	rows, err := DB.Query(query, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -83,6 +122,11 @@ func InitDatabase(databaseURL string) error {
 	if err != nil {
 		return err
 	}
+
+	// Configure connection pool for better performance
+	DB.SetMaxOpenConns(25)                 // Maximum open connections
+	DB.SetMaxIdleConns(10)                 // Maximum idle connections
+	DB.SetConnMaxLifetime(5 * time.Minute) // Maximum connection lifetime
 
 	// Test connection
 	if err = DB.Ping(); err != nil {

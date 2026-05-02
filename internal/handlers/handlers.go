@@ -28,33 +28,47 @@ func handlePostDeliveryEvent(w http.ResponseWriter, r *http.Request) {
 	logger.Info("POST /delivery-events requested", nil)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		logger.Error("failed to read request body", map[string]interface{}{"error": err.Error()})
+		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 
 	var event models.DeliveryEvent
 	if err := json.Unmarshal(body, &event); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		logger.Error("failed to unmarshal event", map[string]interface{}{"error": err.Error()})
+		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 
 	platformToken := r.Header.Get("X-Platform-Token")
-
-	validTokens, err := validation.FetchPlatformTokens()
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+	if platformToken == "" {
+		logger.Error("missing platform token", nil)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	if validation.ValidatePlatformToken(platformToken, validTokens) {
-		err = storage.StoreEvent(event, platformToken, "valid")
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	validTokens, err := validation.FetchPlatformTokens()
+	if err != nil {
+		logger.Error("failed to fetch platform tokens", map[string]interface{}{"error": err.Error()})
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
 	}
+
+	if !validation.ValidatePlatformToken(platformToken, validTokens) {
+		logger.Error("invalid platform token", map[string]interface{}{"token": platformToken})
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	err = storage.StoreEvent(event, platformToken, "valid")
+	if err != nil {
+		logger.Error("failed to store event", map[string]interface{}{"error": err.Error()})
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // handleGetDeliveryEvents returns stored events for debugging/inspection
