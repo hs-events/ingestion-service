@@ -59,7 +59,16 @@ func main() {
 	http.HandleFunc("/health", instrumentHandler("health", handlers.HealthHandler))
 	http.Handle("/metrics", promhttp.Handler())
 
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           nil,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	if err := srv.ListenAndServe(); err != nil {
 		logger.Fatal("server failed", map[string]interface{}{
 			"error": err.Error(),
 		})

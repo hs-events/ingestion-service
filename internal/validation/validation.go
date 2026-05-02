@@ -1,41 +1,56 @@
 package validation
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 )
 
-// ControlServerURL is the URL of the control server
 var ControlServerURL string
 
-// FetchPlatformTokens calls the control server to get valid platform tokens
-func FetchPlatformTokens() ([]string, error) {
-	client := &http.Client{}
-
-	resp, _ := client.Get(ControlServerURL + "/platform-tokens")
-
-	defer resp.Body.Close()
-
-	var result map[string][]string
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	tokens, ok := result["platform_tokens"]
-	if !ok {
-		return nil, fmt.Errorf("platform_tokens not found in response")
-	}
-
-	return tokens, nil
+var httpClient = &http.Client{
+	Timeout: 2 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+	},
 }
 
-// ValidatePlatformToken checks if a token exists in the list of valid tokens
-func ValidatePlatformToken(token string, validTokens []string) bool {
-	for _, validToken := range validTokens {
-		if validToken == token {
-			return true
-		}
+// FetchPlatformTokens returns valid tokens as a set for O(1) lookup.
+func FetchPlatformTokens(ctx context.Context) (map[string]struct{}, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ControlServerURL+"/platform-tokens", nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
 	}
-	return false
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("control server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("control server returned %d", resp.StatusCode)
+	}
+
+	var result struct {
+		PlatformTokens []string `json:"platform_tokens"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	set := make(map[string]struct{}, len(result.PlatformTokens))
+	for _, t := range result.PlatformTokens {
+		set[t] = struct{}{}
+	}
+	return set, nil
+}
+
+func ValidatePlatformToken(token string, validTokens map[string]struct{}) bool {
+	_, ok := validTokens[token]
+	return ok
 }
