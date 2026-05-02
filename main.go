@@ -15,6 +15,7 @@ import (
 	"ingestion-service/internal/validation"
 )
 
+// Ingestion Service - main entry point
 var (
 	// Standard HTTP metrics - can't be manipulated as they're recorded by middleware
 	httpRequestsTotal = prometheus.NewCounterVec(
