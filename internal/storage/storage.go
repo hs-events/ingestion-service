@@ -10,25 +10,62 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// DB is the database handle - initialized by InitDatabase
 var DB *sql.DB
 
-// StoreEvent persists an event to the database
-func StoreEvent(event models.DeliveryEvent, platformToken, validationStatus string) error {
-	receivedAt := time.Now().Unix()
-	eventTimestamp := event.EventTimestamp.Unix()
+type eventRecord struct {
+	event            models.DeliveryEvent
+	platformToken    string
+	validationStatus string
+	receivedAt       int64
+}
 
+var eventQueue = make(chan eventRecord, 10000)
+
+func StartWorker() {
+	go func() {
+		for record := range eventQueue {
+			writeEvent(record)
+		}
+	}()
+}
+
+func writeEvent(record eventRecord) {
 	_, err := DB.Exec(`
 		INSERT INTO events (order_id, event_type, event_timestamp, received_at,
 		                    customer_id, restaurant_id, driver_id, location_lat, location_lng,
 		                    platform_token, validation_status, validation_error)
-		VALUES ('`+event.OrderID+`', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, '')
-	`, event.EventType, eventTimestamp, receivedAt,
-		event.CustomerID, event.RestaurantID, event.DriverID, event.Location.Lat, event.Location.Lng,
-		platformToken, validationStatus)
-
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '')
+	`,
+		record.event.OrderID,
+		record.event.EventType,
+		record.event.EventTimestamp.Unix(),
+		record.receivedAt,
+		record.event.CustomerID,
+		record.event.RestaurantID,
+		record.event.DriverID,
+		record.event.Location.Lat,
+		record.event.Location.Lng,
+		record.platformToken,
+		record.validationStatus,
+	)
 	if err != nil {
-		return err
+		logger.Error("failed to write event", map[string]interface{}{"error": err.Error()})
+	}
+}
+
+// StoreEvent queues an event for async writing and returns immediately
+func StoreEvent(event models.DeliveryEvent, platformToken, validationStatus string) error {
+	record := eventRecord{
+		event:            event,
+		platformToken:    platformToken,
+		validationStatus: validationStatus,
+		receivedAt:       time.Now().Unix(),
+	}
+
+	select {
+	case eventQueue <- record:
+	default:
+		logger.Error("event queue full, dropping event", nil)
 	}
 
 	return nil
@@ -69,14 +106,12 @@ func QueryEvents(limit int, filtersStr string) ([]models.StoredEvent, error) {
 	return events, nil
 }
 
-// Close closes the database connection
 func Close() {
 	if DB != nil {
 		DB.Close()
 	}
 }
 
-// InitDatabase opens the database connection
 func InitDatabase(databaseURL string) error {
 	var err error
 	DB, err = sql.Open("postgres", databaseURL)
@@ -84,10 +119,13 @@ func InitDatabase(databaseURL string) error {
 		return err
 	}
 
-	// Test connection
 	if err = DB.Ping(); err != nil {
 		return err
 	}
+
+	DB.SetMaxOpenConns(25)
+	DB.SetMaxIdleConns(25)
+	DB.SetConnMaxLifetime(5 * time.Minute)
 
 	logger.Info("database connection established", nil)
 	return nil

@@ -54,6 +54,8 @@ func main() {
 	}
 	defer storage.Close()
 
+	storage.StartWorker()
+
 	// HTTP routes with instrumentation middleware
 	http.HandleFunc("/delivery-events", instrumentHandler("delivery-events", handlers.DeliveryEventsHandler))
 	http.HandleFunc("/health", instrumentHandler("health", handlers.HealthHandler))
