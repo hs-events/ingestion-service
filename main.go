@@ -16,6 +16,7 @@ import (
 )
 
 // Ingestion Service - main entry point
+// This service receives delivery events from the control server, validates them, and stores them in the database.
 var (
 	// Standard HTTP metrics - can't be manipulated as they're recorded by middleware
 	httpRequestsTotal = prometheus.NewCounterVec(
